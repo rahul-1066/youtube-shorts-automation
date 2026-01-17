@@ -29,13 +29,13 @@ VIDEO_SIZE = (1080, 1920)
 
 # Styles & Voices
 FONT = "Arial-Bold" 
-FONT_SIZE_QUESTION = 65 
-FONT_SIZE_OPTION = 55
+FONT_SIZE_QUESTION = 70 
+FONT_SIZE_OPTION = 60
 HIGHLIGHT_COLOR = "#00FF00" 
 TEXT_COLOR = "white"
 STROKE_COLOR = "black" 
-STROKE_WIDTH = 4
-THINKING_TIME = 5 
+STROKE_WIDTH = 6
+THINKING_TIME = 4 
 INDIAN_MALE_VOICES = ["en-IN-PrabhatNeural", "en-IN-NeerjaNeural"]
 
 # --- YOUTUBE UPLOADER ---
@@ -71,7 +71,7 @@ def upload_to_youtube(video_path, metadata_path):
             "categoryId": "27" # Education
         },
         "status": {
-            "privacyStatus": "public", # Change to 'private' if you want to review first
+            "privacyStatus": "private", # Change to 'private' if you want to review first
             "selfDeclaredMadeForKids": False
         }
     }
