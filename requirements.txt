@@ -1,0 +1,9 @@
+google-generativeai
+edge-tts
+moviepy==1.0.3
+imageio==2.33.1
+numpy<1.25
+requests
+urllib3
+decorator
+tqdm
