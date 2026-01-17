@@ -8,29 +8,26 @@ import google.generativeai as genai
 import edge_tts
 from moviepy.editor import *
 from moviepy.config import change_settings
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+from google.oauth2.credentials import Credentials
 
 # --- CONFIGURATION ---
-# 1. API KEY: Reads from Environment Variable (GitHub Secret)
-# If running locally without env var, paste key here for testing, but DO NOT commit to GitHub.
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-if not GEMINI_API_KEY:
-    # Optional fallback for local testing if env var is missing
-    print("⚠️ WARNING: GEMINI_API_KEY not found in environment variables.")
+# YouTube Secrets (Read from Env)
+YT_CLIENT_ID = os.environ.get("YOUTUBE_CLIENT_ID")
+YT_CLIENT_SECRET = os.environ.get("YOUTUBE_CLIENT_SECRET")
+YT_REFRESH_TOKEN = os.environ.get("YOUTUBE_REFRESH_TOKEN")
 
-# 2. ImageMagick Path (Auto-Detect OS)
 if os.name == 'nt':
-    # Windows Path
     change_settings({"IMAGEMAGICK_BINARY": r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"})
-else:
-    # Linux (GitHub Actions) - ImageMagick is installed via apt-get, MoviePy finds it auto.
-    pass 
 
 OUTPUT_FILENAME = "gemini_flash_quiz.mp4"
 METADATA_FILENAME = "video_metadata.json"
 VIDEO_SIZE = (1080, 1920)
 
-# Visual Styles
+# Styles & Voices
 FONT = "Arial-Bold" 
 FONT_SIZE_QUESTION = 65 
 FONT_SIZE_OPTION = 55
@@ -39,19 +36,66 @@ TEXT_COLOR = "white"
 STROKE_COLOR = "black" 
 STROKE_WIDTH = 4
 THINKING_TIME = 5 
+INDIAN_MALE_VOICES = ["en-IN-PrabhatNeural", "en-IN-NeerjaNeural", "hi-IN-MadhurNeural", "bn-IN-BashkarNeural", "ta-IN-ValluvarNeural"]
 
-# Voices
-INDIAN_MALE_VOICES = [
-    "en-IN-PrabhatNeural", "en-IN-NeerjaNeural", "hi-IN-MadhurNeural", 
-    "bn-IN-BashkarNeural", "ta-IN-ValluvarNeural"
-]
+# --- YOUTUBE UPLOADER ---
+def upload_to_youtube(video_path, metadata_path):
+    """Uploads the video to YouTube using the stored Refresh Token."""
+    print("🚀 Starting YouTube Upload...")
+    
+    if not all([YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN]):
+        print("❌ Upload Skipped: Missing YouTube API Secrets.")
+        return
 
-# --- GEMINI AI GENERATOR ---
+    # Load Metadata
+    with open(metadata_path, "r", encoding="utf-8") as f:
+        meta = json.load(f)
+
+    # 1. Authenticate using Refresh Token (No browser needed)
+    creds = Credentials(
+        None, # No access token yet
+        refresh_token=YT_REFRESH_TOKEN,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=YT_CLIENT_ID,
+        client_secret=YT_CLIENT_SECRET
+    )
+
+    youtube = build("youtube", "v3", credentials=creds)
+
+    # 2. Prepare Request
+    body = {
+        "snippet": {
+            "title": meta["title"],
+            "description": meta["description"],
+            "tags": meta["tags"].split(","),
+            "categoryId": "27" # Education
+        },
+        "status": {
+            "privacyStatus": "public", # Change to 'private' if you want to review first
+            "selfDeclaredMadeForKids": False
+        }
+    }
+
+    # 3. Upload
+    media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
+    request = youtube.videos().insert(
+        part="snippet,status",
+        body=body,
+        media_body=media
+    )
+
+    response = None
+    while response is None:
+        status, response = request.next_chunk()
+        if status:
+            print(f"   Uploading... {int(status.progress() * 100)}%")
+
+    print(f"✅ Upload Complete! Video ID: {response.get('id')}")
+
+# --- CONTENT GENERATION ---
 def get_gemini_content():
-    """Asks Gemini Flash for content."""
     print("🧠 Asking Gemini Flash for content...")
     genai.configure(api_key=GEMINI_API_KEY)
-    
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
     except:
@@ -77,18 +121,11 @@ def get_gemini_content():
       "youtube_tags": "tag1, tag2, tag3, tag4, tag5"
     }
     """
-    
     try:
         response = model.generate_content(prompt)
-        text = response.text
-        if "```" in text:
-            text = text.replace("```json", "").replace("```", "")
-        text = text.strip()
-        
+        text = response.text.replace("```json", "").replace("```", "").strip()
         data = json.loads(text)
-        print(f"✅ Gemini Generated: {data['question']}")
         
-        # Save Metadata
         metadata = {
             "title": data['youtube_title'],
             "description": data['youtube_description'],
@@ -96,42 +133,28 @@ def get_gemini_content():
         }
         with open(METADATA_FILENAME, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=4)
-        print(f"📄 Metadata saved to {METADATA_FILENAME}")
-        
         return data
     except Exception as e:
         print(f"❌ Gemini Error: {e}")
         return None
 
-# --- ASSET GENERATION ---
 async def generate_segment_tts(text, filename, voice, rate="+20%"):
     communicate = edge_tts.Communicate(text, voice, rate=rate)
     await communicate.save(filename)
     return filename
 
 def get_pollinations_image(prompt, filename):
-    print(f"🎨 Requesting Image...")
     clean_prompt = prompt.replace("\n", " ")
     encoded_prompt = urllib.parse.quote(clean_prompt)
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true"
-    
     try:
-        response = requests.get(url)
-        if response.status_code == 200:
-            with open(filename, 'wb') as f:
-                f.write(response.content)
-            print("✅ Image saved.")
-        else:
-            print(f"❌ Error fetching image. Status: {response.status_code}")
-    except Exception as e:
-        print(f"❌ Connection error: {e}")
+        with open(filename, 'wb') as f:
+            f.write(requests.get(url).content)
+    except: pass
     return filename
 
-# --- VIDEO CORE ---
 def create_quiz_video(data):
     selected_voice = random.choice(INDIAN_MALE_VOICES)
-    print(f"🎙️ Using Voice: {selected_voice}")
-
     img_filename = "temp_bg.jpg"
     get_pollinations_image(data['image_prompt'], img_filename)
 
@@ -143,17 +166,13 @@ def create_quiz_video(data):
         "d":   {"text": f"Option D... {data['options'][3]}", "file": "temp_d.mp3"},
         "outro": {"text": "Wait for the correct answer or check the comments.", "file": "temp_outro.mp3"}
     }
-
+    
     async def run_all_tts():
-        tasks = []
-        for key, val in segments.items():
-            tasks.append(generate_segment_tts(val['text'], val['file'], selected_voice))
+        tasks = [generate_segment_tts(val['text'], val['file'], selected_voice) for val in segments.values()]
         await asyncio.gather(*tasks)
-
-    print("🎤 Generating audio...")
     asyncio.run(run_all_tts())
 
-    # Timing Logic
+    # Build Clips
     aud_q = AudioFileClip(segments["q"]["file"])
     aud_a = AudioFileClip(segments["a"]["file"])
     aud_b = AudioFileClip(segments["b"]["file"])
@@ -161,83 +180,50 @@ def create_quiz_video(data):
     aud_d = AudioFileClip(segments["d"]["file"])
     aud_outro = AudioFileClip(segments["outro"]["file"])
     
-    time_q_end = aud_q.duration
-    time_a_start = time_q_end
-    time_a_end = time_a_start + aud_a.duration
-    time_b_start = time_a_end
-    time_b_end = time_b_start + aud_b.duration
-    time_c_start = time_b_end
-    time_c_end = time_c_start + aud_c.duration
-    time_d_start = time_c_end
-    time_d_end = time_d_start + aud_d.duration
-    time_outro_start = time_d_end
-    time_outro_end = time_outro_start + aud_outro.duration
+    # Calc Timings
+    t_q = aud_q.duration
+    t_a = t_q + aud_a.duration
+    t_b = t_a + aud_b.duration
+    t_c = t_b + aud_c.duration
+    t_d = t_c + aud_d.duration
+    t_out = t_d + aud_outro.duration
+    t_reveal = t_out + THINKING_TIME
+    total_dur = t_reveal + 3
     
-    time_reveal = time_outro_end + THINKING_TIME
-    total_duration = time_reveal + 3
+    bg_clip = ImageClip(img_filename).resize(VIDEO_SIZE).set_duration(total_dur) if os.path.exists(img_filename) else ColorClip(VIDEO_SIZE, (30,30,30), duration=total_dur)
+    
+    txt_q = TextClip(data['question'], font=FONT, fontsize=FONT_SIZE_QUESTION, color=TEXT_COLOR, stroke_color=STROKE_COLOR, stroke_width=STROKE_WIDTH, size=(900,None), method='caption').set_position(('center', 250)).set_start(0).set_duration(total_dur)
+    
+    clips = [bg_clip, txt_q]
+    y_start, y_gap = 750, 160
+    
+    def make_opt(txt, t_start, correct, y):
+        n = TextClip(txt, font=FONT, fontsize=FONT_SIZE_OPTION, color=TEXT_COLOR, stroke_color=STROKE_COLOR, stroke_width=STROKE_WIDTH, size=(850,None), method='caption', align='West').set_position(('center', y)).set_start(t_start).set_end(t_reveal)
+        r = TextClip(txt, font=FONT, fontsize=FONT_SIZE_OPTION, color=HIGHLIGHT_COLOR if correct else TEXT_COLOR, stroke_color=STROKE_COLOR, stroke_width=STROKE_WIDTH, size=(850,None), method='caption', align='West').set_position(('center', y)).set_start(t_reveal).set_duration(total_dur - t_reveal)
+        return [n, r]
 
-    # Visuals
-    if os.path.exists(img_filename):
-        bg_clip = ImageClip(img_filename).resize(VIDEO_SIZE).set_duration(total_duration)
-    else:
-        bg_clip = ColorClip(size=VIDEO_SIZE, color=(30, 30, 40), duration=total_duration)
+    clips += make_opt(f"A: {data['options'][0]}", t_q, data['correct_index']==0, y_start)
+    clips += make_opt(f"B: {data['options'][1]}", t_a, data['correct_index']==1, y_start+y_gap)
+    clips += make_opt(f"C: {data['options'][2]}", t_b, data['correct_index']==2, y_start+y_gap*2)
+    clips += make_opt(f"D: {data['options'][3]}", t_c, data['correct_index']==3, y_start+y_gap*3)
     
-    txt_q = (TextClip(data['question'], font=FONT, fontsize=FONT_SIZE_QUESTION, 
-                      color=TEXT_COLOR, stroke_color=STROKE_COLOR, stroke_width=STROKE_WIDTH,
-                      size=(900, None), method='caption')
-             .set_position(('center', 250))
-             .set_start(0)
-             .set_duration(total_duration))
-
-    option_clips = []
-    y_start = 750
-    y_gap = 160
+    silence = AudioClip(lambda t: [0,0], duration=THINKING_TIME)
+    final_audio = concatenate_audioclips([aud_q, aud_a, aud_b, aud_c, aud_d, aud_outro, silence])
     
-    def create_option_clip(text, start_time, is_answer, y_pos):
-        normal = (TextClip(text, font=FONT, fontsize=FONT_SIZE_OPTION, 
-                           color=TEXT_COLOR, stroke_color=STROKE_COLOR, stroke_width=STROKE_WIDTH,
-                           size=(850, None), method='caption', align='West')
-                  .set_position(('center', y_pos))
-                  .set_start(start_time)
-                  .set_end(time_reveal))
-        
-        reveal = (TextClip(text, font=FONT, fontsize=FONT_SIZE_OPTION, 
-                           color=HIGHLIGHT_COLOR if is_answer else TEXT_COLOR, 
-                           stroke_color=STROKE_COLOR, stroke_width=STROKE_WIDTH,
-                           size=(850, None), method='caption', align='West')
-                  .set_position(('center', y_pos))
-                  .set_start(time_reveal)
-                  .set_duration(total_duration - time_reveal))
-        return [normal, reveal]
-
-    option_clips.extend(create_option_clip(f"A: {data['options'][0]}", time_a_start, data['correct_index'] == 0, y_start))
-    option_clips.extend(create_option_clip(f"B: {data['options'][1]}", time_b_start, data['correct_index'] == 1, y_start + y_gap))
-    option_clips.extend(create_option_clip(f"C: {data['options'][2]}", time_c_start, data['correct_index'] == 2, y_start + (y_gap*2)))
-    option_clips.extend(create_option_clip(f"D: {data['options'][3]}", time_d_start, data['correct_index'] == 3, y_start + (y_gap*3)))
-
-    # Composite
-    silence_clip = AudioClip(lambda t: [0, 0], duration=THINKING_TIME)
-    final_audio = concatenate_audioclips([aud_q, aud_a, aud_b, aud_c, aud_d, aud_outro, silence_clip])
-    
-    final_video = CompositeVideoClip([bg_clip, txt_q] + option_clips, size=VIDEO_SIZE)
-    final_video = final_video.set_audio(final_audio)
-    final_video = final_video.set_duration(total_duration)
-    
-    # Use logger=None to keep terminal clean
-    final_video.write_videofile(OUTPUT_FILENAME, fps=24, codec="libx264", audio_codec="aac", logger=None)
+    final = CompositeVideoClip(clips, size=VIDEO_SIZE).set_audio(final_audio).set_duration(total_dur)
+    final.write_videofile(OUTPUT_FILENAME, fps=24, codec="libx264", audio_codec="aac", logger=None)
     
     # Cleanup
     try:
-        aud_q.close(); aud_a.close(); aud_b.close(); aud_c.close(); aud_d.close(); aud_outro.close()
-        for seg in segments.values():
-            if os.path.exists(seg["file"]): os.remove(seg["file"])
-        if os.path.exists(img_filename): os.remove(img_filename)
-    except:
-        pass
-    print(f"✨ SUCCESS! Video saved as: {OUTPUT_FILENAME}")
-    print(f"📄 Metadata saved as: {METADATA_FILENAME}")
+        [c.close() for c in [aud_q, aud_a, aud_b, aud_c, aud_d, aud_outro]]
+        [os.remove(f) for f in [img_filename] + [s['file'] for s in segments.values()] if os.path.exists(f)]
+    except: pass
+    
+    print(f"✨ Video Generated: {OUTPUT_FILENAME}")
+    
+    # --- TRIGGER UPLOAD ---
+    upload_to_youtube(OUTPUT_FILENAME, METADATA_FILENAME)
 
 if __name__ == "__main__":
-    quiz_data = get_gemini_content()
-    if quiz_data:
-        create_quiz_video(quiz_data)
+    d = get_gemini_content()
+    if d: create_quiz_video(d)
