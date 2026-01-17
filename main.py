@@ -36,7 +36,7 @@ TEXT_COLOR = "white"
 STROKE_COLOR = "black" 
 STROKE_WIDTH = 4
 THINKING_TIME = 5 
-INDIAN_MALE_VOICES = ["en-IN-PrabhatNeural", "en-IN-NeerjaNeural", "hi-IN-MadhurNeural", "bn-IN-BashkarNeural", "ta-IN-ValluvarNeural"]
+INDIAN_MALE_VOICES = ["en-IN-PrabhatNeural", "en-IN-NeerjaNeural"]
 
 # --- YOUTUBE UPLOADER ---
 def upload_to_youtube(video_path, metadata_path):
@@ -97,9 +97,9 @@ def get_gemini_content():
     print("🧠 Asking Gemini Flash for content...")
     genai.configure(api_key=GEMINI_API_KEY)
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+       model = genai.GenerativeModel('gemini-2.5-flash')
     except:
-        model = genai.GenerativeModel('gemini-pro')
+        model = genai.GenerativeModel('gemini-2.0-flash')
 
     prompt = """
     Generate 1 unique, engaging General Knowledge or Trivia question suitable for an Indian audience (UPSC/Student level).
