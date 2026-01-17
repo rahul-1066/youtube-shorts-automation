@@ -28,7 +28,7 @@ METADATA_FILENAME = "video_metadata.json"
 VIDEO_SIZE = (1080, 1920)
 
 # Styles & Voices
-FONT = "Arial" 
+FONT = "Impact" 
 FONT_SIZE_QUESTION = 70 
 FONT_SIZE_OPTION = 60
 HIGHLIGHT_COLOR = "#00FF00" 
