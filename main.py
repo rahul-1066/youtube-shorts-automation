@@ -102,8 +102,8 @@ def get_gemini_content():
         model = genai.GenerativeModel('gemini-2.0-flash')
 
     prompt = """
-    Generate 1 unique, engaging General Knowledge or Trivia question suitable for an Indian audience (UPSC/Student level).
-    Topics can be History, Science, Indian Polity, Geography, or Tech.
+    Generate 1 unique, engaging General Knowledge or Trivia question suitable for an Indian audience (UPSC/Student level 2).
+    Topics can be History, Science, Indian Polity, Geography,current events, or Tech.
     Make the question small (up to 8 words only).
     
     ALSO generate YouTube Video Metadata.
