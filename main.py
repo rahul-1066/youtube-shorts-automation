@@ -25,6 +25,7 @@ if os.name == 'nt':
 
 OUTPUT_FILENAME = "gemini_flash_quiz.mp4"
 METADATA_FILENAME = "video_metadata.json"
+HISTORY_FILENAME = "history.json"  # <--- NEW HISTORY FILE
 VIDEO_SIZE = (1080, 1920)
 
 # Styles & Voices
@@ -37,6 +38,29 @@ STROKE_COLOR = "black"
 STROKE_WIDTH = 1
 THINKING_TIME = 4 
 INDIAN_MALE_VOICES = ["en-IN-PrabhatNeural", "en-IN-NeerjaNeural"]
+
+# --- HISTORY MANAGER ---
+def get_past_questions():
+    """Reads the list of previous questions to avoid duplicates."""
+    if os.path.exists(HISTORY_FILENAME):
+        try:
+            with open(HISTORY_FILENAME, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return []
+    return []
+    
+def save_current_question(question_text):
+    """Saves the new question to history."""
+    history = get_past_questions()
+    history.append(question_text)
+    # Keep only the last 50 items to prevent the file from getting too huge for the prompt
+    if len(history) > 50:
+        history = history[-50:]
+    
+    with open(HISTORY_FILENAME, "w", encoding="utf-8") as f:
+        json.dump(history, f, indent=4)
+    print(f"📝 History updated. Total items: {len(history)}")
 
 # --- YOUTUBE UPLOADER ---
 def upload_to_youtube(video_path, metadata_path):
@@ -96,6 +120,12 @@ def upload_to_youtube(video_path, metadata_path):
 def get_gemini_content():
     print("🧠 Asking Gemini Flash for content...")
     genai.configure(api_key=GEMINI_API_KEY)
+
+    # 1. Get History
+    past_questions = get_past_questions()
+    history_context = ", ".join(past_questions)
+
+    
     try:
        model = genai.GenerativeModel('gemini-2.5-flash')
     except:
@@ -105,6 +135,8 @@ def get_gemini_content():
     Generate 1 unique, engaging General Knowledge or Trivia question suitable for an Indian audience (UPSC/Student level 2).
     Topics can be History, Science, Indian Polity, Geography,current events, or Tech.
     Make the question small (up to 8 words only).
+    CRITICAL INSTRUCTION: Do NOT generate any of the following questions (or very similar ones):
+    [{history_context}]
     
     ALSO generate YouTube Video Metadata.
     
@@ -121,10 +153,14 @@ def get_gemini_content():
       "youtube_tags": "tag1, tag2, tag3, tag4, tag5"
     }
     """
-    try:
+   try:
         response = model.generate_content(prompt)
         text = response.text.replace("```json", "").replace("```", "").strip()
         data = json.loads(text)
+        print(f"✅ Gemini Generated: {data['question']}")
+        
+        # 3. Save the new question to history immediately
+        save_current_question(data['question'])
         
         metadata = {
             "title": data['youtube_title'],
@@ -133,6 +169,7 @@ def get_gemini_content():
         }
         with open(METADATA_FILENAME, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=4)
+        
         return data
     except Exception as e:
         print(f"❌ Gemini Error: {e}")
