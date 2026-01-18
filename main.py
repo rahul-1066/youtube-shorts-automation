@@ -190,12 +190,16 @@ async def generate_segment_tts(text, filename, voice, rate="+20%"):
 
 def get_pollinations_image(prompt, filename):
     print(f"🎨 Requesting Image...")
+    clean_prompt = prompt.replace("\n", " ")
+    encoded_prompt = urllib.parse.quote(clean_prompt)
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true"
+    
     try:
         with open(filename, 'wb') as f:
             f.write(requests.get(url).content)
         print("✅ Image saved.")
-    except: pass
+    except: 
+        pass
     return filename
 
 def create_quiz_video(data):
