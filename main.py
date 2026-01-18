@@ -4,6 +4,7 @@ import os
 import random
 import json
 import urllib.parse
+from datetime import datetime, timedelta, timezone
 import google.generativeai as genai
 import edge_tts
 from moviepy.editor import *
@@ -25,7 +26,7 @@ if os.name == 'nt':
 
 OUTPUT_FILENAME = "gemini_flash_quiz.mp4"
 METADATA_FILENAME = "video_metadata.json"
-HISTORY_FILENAME = "history.json"  # <--- NEW HISTORY FILE
+HISTORY_FILENAME = "history.json"
 VIDEO_SIZE = (1080, 1920)
 
 # --- VISUAL STYLES ---
@@ -35,8 +36,8 @@ FONT_SIZE_OPTION = 60
 HIGHLIGHT_COLOR = "#00FF00" 
 TEXT_COLOR = "white"
 STROKE_COLOR = "black" 
-STROKE_WIDTH = 1        
-THINKING_TIME = 2        
+STROKE_WIDTH = 1         
+THINKING_TIME = 3       
 
 # Voices
 INDIAN_MALE_VOICES = [
@@ -45,46 +46,62 @@ INDIAN_MALE_VOICES = [
 
 # --- HISTORY MANAGER ---
 def get_past_questions():
-    """Reads the list of previous questions to avoid duplicates."""
     if os.path.exists(HISTORY_FILENAME):
         try:
             with open(HISTORY_FILENAME, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except:
-            return []
+        except: return []
     return []
 
 def save_current_question(question_text):
-    """Saves the new question to history."""
     history = get_past_questions()
     history.append(question_text)
-    # Keep only the last 50 items to prevent the file from getting too huge for the prompt
-    if len(history) > 50:
-        history = history[-50:]
-    
+    if len(history) > 50: history = history[-50:]
     with open(HISTORY_FILENAME, "w", encoding="utf-8") as f:
         json.dump(history, f, indent=4)
-    print(f"📝 History updated. Total items: {len(history)}")
+
+# --- SMART SCHEDULER (NEW) ---
+def get_scheduled_time():
+    """Calculates the next best slot (8:30 AM or 9:30 PM IST)."""
+    # Define India Standard Time (IST)
+    ist_offset = timezone(timedelta(hours=5, minutes=30))
+    now = datetime.now(ist_offset)
+    
+    # Define Targets
+    today_morning = now.replace(hour=8, minute=30, second=0, microsecond=0)
+    today_evening = now.replace(hour=21, minute=30, second=0, microsecond=0)
+    
+    if now < today_morning:
+        # Before 8:30 AM -> Schedule for Morning
+        target = today_morning
+        label = "Today Morning (8:30 AM)"
+    elif now < today_evening:
+        # Between 8:30 AM and 9:30 PM -> Schedule for Night
+        target = today_evening
+        label = "Today Night (9:30 PM)"
+    else:
+        # After 9:30 PM -> Schedule for Tomorrow Morning
+        target = today_morning + timedelta(days=1)
+        label = "Tomorrow Morning (8:30 AM)"
+        
+    return target.isoformat(), label
 
 # --- YOUTUBE UPLOADER ---
 def upload_to_youtube(video_path, metadata_path):
     print("🚀 Starting YouTube Upload...")
     
     if not all([YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN]):
-        print("❌ Upload Skipped: Missing YouTube API Secrets.")
+        print("❌ Upload Skipped: Missing YouTube Secrets.")
         return
 
     with open(metadata_path, "r", encoding="utf-8") as f:
         meta = json.load(f)
 
-    creds = Credentials(
-        None, 
-        refresh_token=YT_REFRESH_TOKEN,
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=YT_CLIENT_ID,
-        client_secret=YT_CLIENT_SECRET
-    )
+    # Calculate Schedule Time
+    publish_at, schedule_label = get_scheduled_time()
+    print(f"⏰ Smart Schedule: {schedule_label}")
 
+    creds = Credentials(None, refresh_token=YT_REFRESH_TOKEN, token_uri="https://oauth2.googleapis.com/token", client_id=YT_CLIENT_ID, client_secret=YT_CLIENT_SECRET)
     youtube = build("youtube", "v3", credentials=creds)
 
     body = {
@@ -95,63 +112,53 @@ def upload_to_youtube(video_path, metadata_path):
             "categoryId": "27" 
         },
         "status": {
-            "privacyStatus": "private", 
+            "privacyStatus": "private",  # Must be private to use publishAt
+            "publishAt": publish_at,
             "selfDeclaredMadeForKids": False
         }
     }
 
     media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
-    request = youtube.videos().insert(
-        part="snippet,status",
-        body=body,
-        media_body=media
-    )
+    request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
     response = None
     print("   Uploading...")
     while response is None:
         status, response = request.next_chunk()
-        if status:
-            print(f"   Progress: {int(status.progress() * 100)}%")
+        if status: print(f"   Progress: {int(status.progress() * 100)}%")
 
-    print(f"✅ Upload Complete! Video ID: {response.get('id')}")
+    print(f"✅ Upload Complete! Video scheduled for {schedule_label}")
 
 # --- GEMINI CONTENT ---
 def get_gemini_content():
     print("🧠 Asking Gemini Flash for content...")
     genai.configure(api_key=GEMINI_API_KEY)
     
-    # 1. Get History
-    past_questions = get_past_questions()
-    history_context = ", ".join(past_questions)
-    
+    history_context = ", ".join(get_past_questions())
     try:
         model = genai.GenerativeModel('gemini-2.5-flash')
     except:
         model = genai.GenerativeModel('gemini-2.0-flash')
 
-    # 2. Updated Prompt with Exclusion List
     prompt = f"""
-    Generate 1 unique, engaging General Knowledge or Trivia question suitable for an Indian audience (UPSC/Student level 2).
-    Topics can be History, Science, Indian Polity, Geography,current events, or Tech.
-    Make the question small (up to 8 words only).
+    Generate 1 unique, engaging General Knowledge/Trivia question for Indian UPSC students.
+    Topics: History, Science, Polity, Geography,current events, or Tech.
+    Question length: Small (max 8 words).
     
-    CRITICAL INSTRUCTION: Do NOT generate any of the following questions (or very similar ones):
-    [{history_context}]
+    EXCLUDE these previous questions: [{history_context}]
     
-    ALSO generate YouTube Video Metadata.
-    
-    Output STRICT JSON format ONLY. Do not use Markdown.
+    ALSO generate YouTube Metadata.
+    Output STRICT JSON. No Markdown.
     Structure:
     {{
       "id": 1,
-      "question": "The question text?",
-      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "question": "Question text?",
+      "options": ["A", "B", "C", "D"],
       "correct_index": 0, 
-      "image_prompt": "A highly detailed, cinematic, vertical 9:16 description of the background image related to the question. Do not include text in the image.",
-      "youtube_title": "A catchy, viral 5-8 word title for YouTube Shorts #Shorts",
-      "youtube_description": "A 2-sentence engaging description including the question. Add 3-4 hashtags.",
-      "youtube_tags": "tag1, tag2, tag3, tag4, tag5"
+      "image_prompt": "Cinematic 9:16 background description, no text.",
+      "youtube_title": "Viral 5-8 word title #Shorts",
+      "youtube_description": "2-sentence description with hashtags.",
+      "youtube_tags": "tag1, tag2, tag3"
     }}
     """
     
@@ -161,16 +168,14 @@ def get_gemini_content():
         data = json.loads(text)
         print(f"✅ Gemini Generated: {data['question']}")
         
-        # 3. Save the new question to history immediately
         save_current_question(data['question'])
         
-        metadata = {
-            "title": data['youtube_title'],
-            "description": data['youtube_description'],
-            "tags": data['youtube_tags']
-        }
         with open(METADATA_FILENAME, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=4)
+            json.dump({
+                "title": data['youtube_title'],
+                "description": data['youtube_description'],
+                "tags": data['youtube_tags']
+            }, f, indent=4)
         
         return data
     except Exception as e:
@@ -185,16 +190,12 @@ async def generate_segment_tts(text, filename, voice, rate="+20%"):
 
 def get_pollinations_image(prompt, filename):
     print(f"🎨 Requesting Image...")
-    clean_prompt = prompt.replace("\n", " ")
-    encoded_prompt = urllib.parse.quote(clean_prompt)
-    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true"
-    
+    url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt.replace('\n',' '))}?width=1080&height=1920&nologo=true"
     try:
         with open(filename, 'wb') as f:
             f.write(requests.get(url).content)
         print("✅ Image saved.")
-    except: 
-        pass
+    except: pass
     return filename
 
 def create_quiz_video(data):
@@ -218,7 +219,6 @@ def create_quiz_video(data):
         await asyncio.gather(*tasks)
     asyncio.run(run_all_tts())
 
-    # Build Clips
     aud_q = AudioFileClip(segments["q"]["file"])
     aud_a = AudioFileClip(segments["a"]["file"])
     aud_b = AudioFileClip(segments["b"]["file"])
@@ -226,7 +226,6 @@ def create_quiz_video(data):
     aud_d = AudioFileClip(segments["d"]["file"])
     aud_outro = AudioFileClip(segments["outro"]["file"])
     
-    # Timings
     t_q = aud_q.duration
     t_a = t_q + aud_a.duration
     t_b = t_a + aud_b.duration
@@ -238,13 +237,7 @@ def create_quiz_video(data):
     
     bg_clip = ImageClip(img_filename).resize(VIDEO_SIZE).set_duration(total_dur) if os.path.exists(img_filename) else ColorClip(VIDEO_SIZE, (30,30,30), duration=total_dur)
     
-    # Question Text (Widened box for Impact font)
-    txt_q = (TextClip(data['question'], font=FONT, fontsize=FONT_SIZE_QUESTION, 
-                      color=TEXT_COLOR, stroke_color=STROKE_COLOR, stroke_width=STROKE_WIDTH,
-                      size=(950, None), method='caption')
-             .set_position(('center', 250))
-             .set_start(0)
-             .set_duration(total_dur))
+    txt_q = TextClip(data['question'], font=FONT, fontsize=FONT_SIZE_QUESTION, color=TEXT_COLOR, stroke_color=STROKE_COLOR, stroke_width=STROKE_WIDTH, size=(950, None), method='caption').set_position(('center', 250)).set_start(0).set_duration(total_dur)
 
     clips = [bg_clip, txt_q]
     y_start, y_gap = 800, 180
