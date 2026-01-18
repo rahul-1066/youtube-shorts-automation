@@ -190,7 +190,7 @@ async def generate_segment_tts(text, filename, voice, rate="+20%"):
 
 def get_pollinations_image(prompt, filename):
     print(f"🎨 Requesting Image...")
-    url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt.replace('\n',' '))}?width=1080&height=1920&nologo=true"
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true"
     try:
         with open(filename, 'wb') as f:
             f.write(requests.get(url).content)
