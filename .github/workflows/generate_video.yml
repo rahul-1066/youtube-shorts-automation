@@ -6,6 +6,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    
+    # PERMISSIONS REQUIRED TO COMMIT CHANGES
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout code
@@ -31,10 +35,11 @@ jobs:
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
         run: python main.py
 
-      - name: Upload Artifact (Backup)
-        uses: actions/upload-artifact@v4
-        with:
-          name: daily-short-video
-          path: |
-            gemini_flash_quiz.mp4
-            video_metadata.json
+      # --- NEW STEP: SAVE HISTORY ---
+      - name: Commit & Push History
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+          git add history.json
+          git commit -m "Update question history [skip ci]" || echo "No changes to commit"
+          git push
