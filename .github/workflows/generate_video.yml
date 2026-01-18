@@ -2,6 +2,9 @@ name: Auto Shorts Generator
 
 on:
   workflow_dispatch:
+  schedule:
+    
+    - cron: '24 1 * * *'
 
 jobs:
   build:
