@@ -15,7 +15,7 @@ from google.oauth2.credentials import Credentials
 # --- CONFIGURATION ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# YouTube Secrets (Read from Env)
+# YouTube Secrets
 YT_CLIENT_ID = os.environ.get("YOUTUBE_CLIENT_ID")
 YT_CLIENT_SECRET = os.environ.get("YOUTUBE_CLIENT_SECRET")
 YT_REFRESH_TOKEN = os.environ.get("YOUTUBE_REFRESH_TOKEN")
@@ -28,16 +28,20 @@ METADATA_FILENAME = "video_metadata.json"
 HISTORY_FILENAME = "history.json"  # <--- NEW HISTORY FILE
 VIDEO_SIZE = (1080, 1920)
 
-# Styles & Voices
+# --- VISUAL STYLES ---
 FONT = "Impact" 
-FONT_SIZE_QUESTION = 70 
-FONT_SIZE_OPTION = 60
+FONT_SIZE_QUESTION = 75 
+FONT_SIZE_OPTION = 60    
 HIGHLIGHT_COLOR = "#00FF00" 
 TEXT_COLOR = "white"
 STROKE_COLOR = "black" 
-STROKE_WIDTH = 1
-THINKING_TIME = 4 
-INDIAN_MALE_VOICES = ["en-IN-PrabhatNeural", "en-IN-NeerjaNeural"]
+STROKE_WIDTH = 1        
+THINKING_TIME = 2        
+
+# Voices
+INDIAN_MALE_VOICES = [
+    "en-IN-PrabhatNeural", "en-IN-NeerjaNeural"
+]
 
 # --- HISTORY MANAGER ---
 def get_past_questions():
@@ -49,7 +53,7 @@ def get_past_questions():
         except:
             return []
     return []
-    
+
 def save_current_question(question_text):
     """Saves the new question to history."""
     history = get_past_questions()
@@ -64,20 +68,17 @@ def save_current_question(question_text):
 
 # --- YOUTUBE UPLOADER ---
 def upload_to_youtube(video_path, metadata_path):
-    """Uploads the video to YouTube using the stored Refresh Token."""
     print("🚀 Starting YouTube Upload...")
     
     if not all([YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN]):
         print("❌ Upload Skipped: Missing YouTube API Secrets.")
         return
 
-    # Load Metadata
     with open(metadata_path, "r", encoding="utf-8") as f:
         meta = json.load(f)
 
-    # 1. Authenticate using Refresh Token (No browser needed)
     creds = Credentials(
-        None, # No access token yet
+        None, 
         refresh_token=YT_REFRESH_TOKEN,
         token_uri="https://oauth2.googleapis.com/token",
         client_id=YT_CLIENT_ID,
@@ -86,21 +87,19 @@ def upload_to_youtube(video_path, metadata_path):
 
     youtube = build("youtube", "v3", credentials=creds)
 
-    # 2. Prepare Request
     body = {
         "snippet": {
             "title": meta["title"],
             "description": meta["description"],
             "tags": meta["tags"].split(","),
-            "categoryId": "27" # Education
+            "categoryId": "27" 
         },
         "status": {
-            "privacyStatus": "private", # Change to 'private' if you want to review first
+            "privacyStatus": "private", 
             "selfDeclaredMadeForKids": False
         }
     }
 
-    # 3. Upload
     media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
     request = youtube.videos().insert(
         part="snippet,status",
@@ -109,32 +108,34 @@ def upload_to_youtube(video_path, metadata_path):
     )
 
     response = None
+    print("   Uploading...")
     while response is None:
         status, response = request.next_chunk()
         if status:
-            print(f"   Uploading... {int(status.progress() * 100)}%")
+            print(f"   Progress: {int(status.progress() * 100)}%")
 
     print(f"✅ Upload Complete! Video ID: {response.get('id')}")
 
-# --- CONTENT GENERATION ---
+# --- GEMINI CONTENT ---
 def get_gemini_content():
     print("🧠 Asking Gemini Flash for content...")
     genai.configure(api_key=GEMINI_API_KEY)
-
+    
     # 1. Get History
     past_questions = get_past_questions()
     history_context = ", ".join(past_questions)
-
     
     try:
-       model = genai.GenerativeModel('gemini-2.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
     except:
         model = genai.GenerativeModel('gemini-2.0-flash')
 
-    prompt = """
+    # 2. Updated Prompt with Exclusion List
+    prompt = f"""
     Generate 1 unique, engaging General Knowledge or Trivia question suitable for an Indian audience (UPSC/Student level 2).
     Topics can be History, Science, Indian Polity, Geography,current events, or Tech.
     Make the question small (up to 8 words only).
+    
     CRITICAL INSTRUCTION: Do NOT generate any of the following questions (or very similar ones):
     [{history_context}]
     
@@ -142,7 +143,7 @@ def get_gemini_content():
     
     Output STRICT JSON format ONLY. Do not use Markdown.
     Structure:
-    {
+    {{
       "id": 1,
       "question": "The question text?",
       "options": ["Option A", "Option B", "Option C", "Option D"],
@@ -151,9 +152,10 @@ def get_gemini_content():
       "youtube_title": "A catchy, viral 5-8 word title for YouTube Shorts #Shorts",
       "youtube_description": "A 2-sentence engaging description including the question. Add 3-4 hashtags.",
       "youtube_tags": "tag1, tag2, tag3, tag4, tag5"
-    }
+    }}
     """
-   try:
+    
+    try:
         response = model.generate_content(prompt)
         text = response.text.replace("```json", "").replace("```", "").strip()
         data = json.loads(text)
@@ -175,23 +177,30 @@ def get_gemini_content():
         print(f"❌ Gemini Error: {e}")
         return None
 
+# --- ASSETS & VIDEO ---
 async def generate_segment_tts(text, filename, voice, rate="+20%"):
     communicate = edge_tts.Communicate(text, voice, rate=rate)
     await communicate.save(filename)
     return filename
 
 def get_pollinations_image(prompt, filename):
+    print(f"🎨 Requesting Image...")
     clean_prompt = prompt.replace("\n", " ")
     encoded_prompt = urllib.parse.quote(clean_prompt)
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true"
+    
     try:
         with open(filename, 'wb') as f:
             f.write(requests.get(url).content)
-    except: pass
+        print("✅ Image saved.")
+    except: 
+        pass
     return filename
 
 def create_quiz_video(data):
     selected_voice = random.choice(INDIAN_MALE_VOICES)
+    print(f"🎙️ Using Voice: {selected_voice}")
+
     img_filename = "temp_bg.jpg"
     get_pollinations_image(data['image_prompt'], img_filename)
 
@@ -203,7 +212,7 @@ def create_quiz_video(data):
         "d":   {"text": f"Option D... {data['options'][3]}", "file": "temp_d.mp3"},
         "outro": {"text": "Wait for the correct answer or check the comments.", "file": "temp_outro.mp3"}
     }
-    
+
     async def run_all_tts():
         tasks = [generate_segment_tts(val['text'], val['file'], selected_voice) for val in segments.values()]
         await asyncio.gather(*tasks)
@@ -217,7 +226,7 @@ def create_quiz_video(data):
     aud_d = AudioFileClip(segments["d"]["file"])
     aud_outro = AudioFileClip(segments["outro"]["file"])
     
-    # Calc Timings
+    # Timings
     t_q = aud_q.duration
     t_a = t_q + aud_a.duration
     t_b = t_a + aud_b.duration
@@ -229,14 +238,20 @@ def create_quiz_video(data):
     
     bg_clip = ImageClip(img_filename).resize(VIDEO_SIZE).set_duration(total_dur) if os.path.exists(img_filename) else ColorClip(VIDEO_SIZE, (30,30,30), duration=total_dur)
     
-    txt_q = TextClip(data['question'], font=FONT, fontsize=FONT_SIZE_QUESTION, color=TEXT_COLOR, stroke_color=STROKE_COLOR, stroke_width=STROKE_WIDTH, size=(900,None), method='caption').set_position(('center', 250)).set_start(0).set_duration(total_dur)
-    
+    # Question Text (Widened box for Impact font)
+    txt_q = (TextClip(data['question'], font=FONT, fontsize=FONT_SIZE_QUESTION, 
+                      color=TEXT_COLOR, stroke_color=STROKE_COLOR, stroke_width=STROKE_WIDTH,
+                      size=(950, None), method='caption')
+             .set_position(('center', 250))
+             .set_start(0)
+             .set_duration(total_dur))
+
     clips = [bg_clip, txt_q]
-    y_start, y_gap = 750, 160
+    y_start, y_gap = 800, 180
     
     def make_opt(txt, t_start, correct, y):
-        n = TextClip(txt, font=FONT, fontsize=FONT_SIZE_OPTION, color=TEXT_COLOR, stroke_color=STROKE_COLOR, stroke_width=STROKE_WIDTH, size=(850,None), method='caption', align='West').set_position(('center', y)).set_start(t_start).set_end(t_reveal)
-        r = TextClip(txt, font=FONT, fontsize=FONT_SIZE_OPTION, color=HIGHLIGHT_COLOR if correct else TEXT_COLOR, stroke_color=STROKE_COLOR, stroke_width=STROKE_WIDTH, size=(850,None), method='caption', align='West').set_position(('center', y)).set_start(t_reveal).set_duration(total_dur - t_reveal)
+        n = TextClip(txt, font=FONT, fontsize=FONT_SIZE_OPTION, color=TEXT_COLOR, stroke_color=STROKE_COLOR, stroke_width=STROKE_WIDTH, size=(900,None), method='caption', align='West').set_position(('center', y)).set_start(t_start).set_end(t_reveal)
+        r = TextClip(txt, font=FONT, fontsize=FONT_SIZE_OPTION, color=HIGHLIGHT_COLOR if correct else TEXT_COLOR, stroke_color=STROKE_COLOR, stroke_width=STROKE_WIDTH, size=(900,None), method='caption', align='West').set_position(('center', y)).set_start(t_reveal).set_duration(total_dur - t_reveal)
         return [n, r]
 
     clips += make_opt(f"A: {data['options'][0]}", t_q, data['correct_index']==0, y_start)
@@ -250,15 +265,12 @@ def create_quiz_video(data):
     final = CompositeVideoClip(clips, size=VIDEO_SIZE).set_audio(final_audio).set_duration(total_dur)
     final.write_videofile(OUTPUT_FILENAME, fps=24, codec="libx264", audio_codec="aac", logger=None)
     
-    # Cleanup
     try:
         [c.close() for c in [aud_q, aud_a, aud_b, aud_c, aud_d, aud_outro]]
         [os.remove(f) for f in [img_filename] + [s['file'] for s in segments.values()] if os.path.exists(f)]
     except: pass
     
     print(f"✨ Video Generated: {OUTPUT_FILENAME}")
-    
-    # --- TRIGGER UPLOAD ---
     upload_to_youtube(OUTPUT_FILENAME, METADATA_FILENAME)
 
 if __name__ == "__main__":
