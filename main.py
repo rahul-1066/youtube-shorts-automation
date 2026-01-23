@@ -99,7 +99,7 @@ def upload_to_youtube(video_path, metadata_path):
 
     # Calculate Schedule Time
     # publish_at, schedule_label = get_scheduled_time()
-    print(f"⏰ Smart Schedule: {schedule_label}")
+    #print(f"⏰ Smart Schedule: {schedule_label}")
 
     creds = Credentials(None, refresh_token=YT_REFRESH_TOKEN, token_uri="https://oauth2.googleapis.com/token", client_id=YT_CLIENT_ID, client_secret=YT_CLIENT_SECRET)
     youtube = build("youtube", "v3", credentials=creds)
