@@ -112,7 +112,7 @@ def upload_to_youtube(video_path, metadata_path):
             "categoryId": "27" 
         },
         "status": {
-            "privacyStatus": "private",  # Must be private to use publishAt
+            "privacyStatus": "public",  # Must be private to use publishAt
            # "publishAt": publish_at,
             "selfDeclaredMadeForKids": False
         }
