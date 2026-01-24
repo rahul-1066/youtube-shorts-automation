@@ -133,7 +133,7 @@ def upload_to_youtube(video_path, metadata_path):
         status, response = request.next_chunk()
         if status: print(f"   Progress: {int(status.progress() * 100)}%")
 
-    print(f"✅ Upload Complete! Video scheduled for {schedule_label}")
+    #print(f"✅ Upload Complete! Video scheduled for {schedule_label}")
 
 # --- GEMINI CONTENT ---
 def get_gemini_content():
