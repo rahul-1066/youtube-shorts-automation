@@ -20,10 +20,16 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 YT_CLIENT_ID = os.environ.get("YOUTUBE_CLIENT_ID")
 YT_CLIENT_SECRET = os.environ.get("YOUTUBE_CLIENT_SECRET")
 YT_REFRESH_TOKEN = os.environ.get("YOUTUBE_REFRESH_TOKEN")
+import os
+from moviepy.config import change_settings
 
 if os.name == 'nt':
+    # Your existing Windows configuration
     change_settings({"IMAGEMAGICK_BINARY": r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"})
-
+else:
+    # THE FIX: Explicitly point to the binary on Linux/GitHub Actions
+    change_settings({"IMAGEMAGICK_BINARY": "/usr/bin/convert"})
+    
 OUTPUT_FILENAME = "gemini_flash_quiz.mp4"
 METADATA_FILENAME = "video_metadata.json"
 HISTORY_FILENAME = "history.json"
