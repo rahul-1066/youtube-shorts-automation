@@ -2,8 +2,16 @@ name: Auto Shorts Generator
 on:
   workflow_dispatch:
   schedule:
-    - cron: '30 3,7,12,13,14,15,16 * * *'
-
+    # 8:30 AM IST = 03:00 UTC
+    - cron: '0 3 * * *'
+    # 1:30 PM IST = 08:00 UTC
+    - cron: '0 8 * * *'
+    - cron: '0 9 * * *'
+    # 5:30 PM IST = 12:00 UTC
+    - cron: '0 12 * * *'
+    # 9:30 PM IST = 16:00 UTC
+    - cron: '0 13 * * *'
+    
 jobs:
   build:
     runs-on: ubuntu-latest
