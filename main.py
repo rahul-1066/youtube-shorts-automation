@@ -260,7 +260,14 @@ def create_quiz_video(data):
     final_audio = concatenate_audioclips([aud_q, aud_a, aud_b, aud_c, aud_d, aud_outro, silence])
     
     final = CompositeVideoClip(clips, size=VIDEO_SIZE).set_audio(final_audio).set_duration(total_dur)
-    final.write_videofile(OUTPUT_FILENAME, fps=24, codec="libx264", audio_codec="aac", logger=None)
+    final.write_videofile(
+    OUTPUT_FILENAME, 
+    fps=24, 
+    codec="libx264", 
+    audio_codec="aac", 
+    logger=None, 
+    preset='ultrafast', 
+    threads=4)
     
     try:
         [c.close() for c in [aud_q, aud_a, aud_b, aud_c, aud_d, aud_outro]]
