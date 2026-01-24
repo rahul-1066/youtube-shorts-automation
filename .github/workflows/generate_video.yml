@@ -1,5 +1,4 @@
 name: Auto Shorts Generator
-
 on:
   workflow_dispatch:
   schedule:
@@ -8,29 +7,29 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
     permissions:
       contents: write
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4  # Optimized: v3 -> v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5 # Optimized: v4 -> v5
         with:
           python-version: '3.10'
-          cache: 'pip' # <--- OPTIMIZATION 1: Caches your pip installs
+          cache: 'pip' # <--- SPEED BOOST: Caches installed packages
 
-      - name: Configure ImageMagick & Install Deps
+      - name: Install System Dependencies
+        # Optimized: Removed 'apt-get update' (saves ~45s)
+        # ImageMagick is pre-installed on ubuntu-latest, we just ensure it and fix the policy
         run: |
-          # REMOVED: sudo apt-get update (Slow & unnecessary)
-          # REMOVED: sudo apt-get install imagemagick (It is pre-installed on ubuntu-latest)
-          
-          # Keep this fix for MoviePy text rendering
+          sudo apt-get install -y imagemagick
           sudo sed -i 's/none/read,write/g' /etc/ImageMagick-6/policy.xml
-          
-          pip install -r requirements.txt
+
+      - name: Install Python Dependencies
+        # This will be instant if cache hits
+        run: pip install -r requirements.txt
 
       - name: Run Generator & Upload
         env:
