@@ -165,7 +165,7 @@ def get_pollinations_image(prompt, filename):
     print(f"🎨 Requesting Image...")
     clean_prompt = prompt.replace("\n", " ")
     encoded_prompt = urllib.parse.quote(clean_prompt)
-    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true"
+    url = f"https://gen.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true"
     
     try:
         response = requests.get(url, timeout=20)
