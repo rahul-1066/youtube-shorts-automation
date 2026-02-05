@@ -108,9 +108,9 @@ def get_gemini_content():
     
     history_context = ", ".join(get_past_questions())
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash') # Use stable model
+        model = genai.GenerativeModel('gemini-2.5-flash') # Use stable model
     except:
-        model = genai.GenerativeModel('gemini-pro')
+        model = genai.GenerativeModel('gemini-2.0-flash')
 
     prompt = f"""
     Generate 1 unique, engaging General Knowledge/Trivia question for Indian students.
