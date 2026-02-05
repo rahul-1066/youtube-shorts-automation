@@ -1,7 +1,7 @@
 google-generativeai
 edge-tts
 moviepy==1.0.3
-imageio==2.33.1
+imageio[pyav]
 numpy<1.25
 Pillow==9.5.0
 requests
