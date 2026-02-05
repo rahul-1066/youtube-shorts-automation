@@ -174,6 +174,7 @@ def get_pollinations_image(prompt, filename):
             with open(filename, 'wb') as f:
                 f.write(response.content)
             print("✅ Image saved.")
+            print("url")
             return True
         else:
             print(f"⚠️ Image Download Failed (Status: {response.status_code}, Size: {len(response.content)})")
