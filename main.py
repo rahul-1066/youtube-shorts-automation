@@ -14,7 +14,6 @@ from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
 
 # --- CONFIGURATION ---
-# Check platform to set ImageMagick path correctly
 if os.name == 'nt':
     change_settings({"IMAGEMAGICK_BINARY": r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"})
 else:
@@ -108,9 +107,9 @@ def get_gemini_content():
     
     history_context = ", ".join(get_past_questions())
     try:
-        model = genai.GenerativeModel('gemini-2.5-flash') # Use stable model
+        model = genai.GenerativeModel('gemini-2.5-flash')
     except:
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        model = genai.GenerativeModel('gemini-pro')
 
     prompt = f"""
     Generate 1 unique, engaging General Knowledge/Trivia question for Indian students.
@@ -169,14 +168,17 @@ def get_pollinations_image(prompt, filename):
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&model=flux"
     
     try:
-        response = requests.get(url, timeout=30)
-        if response.status_code == 200 and len(response.content) > 0:
+        response = requests.get(url, timeout=20)
+        # CRITICAL FIX: Check if we actually got data (not empty file)
+        if response.status_code == 200 and len(response.content) > 1024:
             with open(filename, 'wb') as f:
                 f.write(response.content)
             print("✅ Image saved.")
             return True
+        else:
+            print(f"⚠️ Image Download Failed (Status: {response.status_code}, Size: {len(response.content)})")
     except Exception as e: 
-        print(f"⚠️ Image Download Error: {e}")
+        print(f"⚠️ Image Connection Error: {e}")
     return False
 
 def create_quiz_video(data):
@@ -184,12 +186,16 @@ def create_quiz_video(data):
     print(f"🎙️ Using Voice: {selected_voice}")
 
     img_filename = "temp_bg.jpg"
-    has_image = get_pollinations_image(data['image_prompt'], img_filename)
+    image_downloaded = get_pollinations_image(data['image_prompt'], img_filename)
 
-    # Use a default black background if image download fails
-    if not has_image or not os.path.exists(img_filename):
-        print("⚠️ Using fallback background.")
-        ColorClip(VIDEO_SIZE, color=(0,0,0)).save_frame(img_filename, t=0)
+    # --- CRITICAL FIX: SAFETY FALLBACK ---
+    # If image failed to download, use a dark grey color background instead of crashing
+    if image_downloaded and os.path.exists(img_filename):
+        # Ensure 'bg_clip' is initialized here
+        bg_clip_source = ImageClip(img_filename).resize(VIDEO_SIZE)
+    else:
+        print("⚠️ Using Fallback Color Background (Image failed)")
+        bg_clip_source = ColorClip(VIDEO_SIZE, color=(30, 30, 30))
 
     segments = {
         "q":   {"text": data['question'], "file": "temp_q.mp3"},
@@ -207,7 +213,6 @@ def create_quiz_video(data):
     asyncio.run(run_all_tts())
 
     # Load Audio
-    audio_clips = []
     try:
         aud_q = AudioFileClip(segments["q"]["file"])
         aud_a = AudioFileClip(segments["a"]["file"])
@@ -230,8 +235,8 @@ def create_quiz_video(data):
     t_reveal = t_out + THINKING_TIME
     total_dur = t_reveal + 3
     
-    # Background
-    bg_clip = ImageClip(img_filename).resize(VIDEO_SIZE).set_duration(total_dur)
+    # Set background duration
+    bg_clip = bg_clip_source.set_duration(total_dur)
     
     # Text Clips
     txt_q = TextClip(data['question'], font=FONT, fontsize=FONT_SIZE_QUESTION, color=TEXT_COLOR, 
