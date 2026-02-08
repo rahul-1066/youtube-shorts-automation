@@ -95,7 +95,7 @@ def get_gemini_content():
     genai.configure(api_key=GEMINI_API_KEY)
     history_context = ", ".join(get_past_questions())
     
-    model = genai.GenerativeModel('gemini-1.5-flash') # Updated to latest stable flash
+    model = genai.GenerativeModel('gemini-2.5-flash') # Updated to latest stable flash
 
     prompt = f"""
     Generate 1 unique, engaging quiz question for a channel called 'Dark Intel'.
