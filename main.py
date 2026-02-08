@@ -161,23 +161,29 @@ async def generate_segment_tts(text, filename, voice, rate="+20%"):
     except Exception as e:
         print(f"⚠️ TTS Error for {filename}: {e}")
 
+
+
 def get_pollinations_image(prompt, filename):
     print(f"🎨 Requesting Image...")
-    clean_prompt = prompt.replace("\n", " ")
-    encoded_prompt = urllib.parse.quote(clean_prompt)
-    #url = f"https://gen.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&model=flux&key=sk_ezYiRxPA927wb2dN8Gia94UBmfrxvNJX"
-    url = f"https://gen.pollinations.ai/image/{clean_prompt}?model=flux&key=sk_ezYiRxPA927wb2dN8Gia94UBmfrxvNJX"
+    clean_prompt = urllib.parse.quote(prompt.replace("\n", " "))
+    url = f"https://gen.pollinations.ai/prompt/{clean_prompt}?model=flux&width=1080&height=1920&nologo=true"
+    
+    # Setup Retry Strategy
+    session = requests.Session()
+    retries = Retry(total=3, backoff_factor=2, status_forcelist=[500, 502, 503, 504])
+    session.mount('https://', HTTPAdapter(max_retries=retries))
+
     try:
-        response = requests.get(url, timeout=20)
-        # CRITICAL FIX: Check if we actually got data (not empty file)
-        if response.status_code == 200 and len(response.content) > 1024:
+        # Increase timeout to 60s for flux model generation
+        response = session.get(url, timeout=60)
+        
+        if response.status_code == 200 and len(response.content) > 5000: # Valid images are usually > 5KB
             with open(filename, 'wb') as f:
                 f.write(response.content)
             print("✅ Image saved.")
-            print("url")
             return True
         else:
-            print(f"⚠️ Image Download Failed (Status: {response.status_code}, Size: {len(response.content)})")
+            print(f"⚠️ Image Download Failed (Status: {response.status_code})")
     except Exception as e: 
         print(f"⚠️ Image Connection Error: {e}")
     return False
