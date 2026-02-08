@@ -4,7 +4,7 @@ import os
 import random
 import json
 import urllib.parse
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 import google.generativeai as genai
 import edge_tts
 from moviepy.editor import *
@@ -12,11 +12,14 @@ from moviepy.config import change_settings
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # --- CONFIGURATION ---
 if os.name == 'nt':
     change_settings({"IMAGEMAGICK_BINARY": r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe"})
 else:
+    # Common path for Linux/GitHub Actions
     change_settings({"IMAGEMAGICK_BINARY": "/usr/bin/convert"})
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -26,25 +29,24 @@ YT_CLIENT_ID = os.environ.get("YOUTUBE_CLIENT_ID")
 YT_CLIENT_SECRET = os.environ.get("YOUTUBE_CLIENT_SECRET")
 YT_REFRESH_TOKEN = os.environ.get("YOUTUBE_REFRESH_TOKEN")
 
-OUTPUT_FILENAME = "gemini_flash_quiz.mp4"
+OUTPUT_FILENAME = "dark_intel_quiz.mp4"
 METADATA_FILENAME = "video_metadata.json"
 HISTORY_FILENAME = "history.json"
 VIDEO_SIZE = (1080, 1920)
 
 # --- VISUAL STYLES ---
 FONT = "Impact" 
-FONT_SIZE_QUESTION = 75 
+FONT_SIZE_QUESTION = 70 
 FONT_SIZE_OPTION = 60    
 HIGHLIGHT_COLOR = "#00FF00" 
 TEXT_COLOR = "white"
 STROKE_COLOR = "black" 
 STROKE_WIDTH = 2          
-THINKING_TIME = 3        
+THINKING_TIME = 5        
 
-# Voices
 INDIAN_MALE_VOICES = ["en-IN-PrabhatNeural", "en-IN-NeerjaNeural"]
 
-# --- HISTORY MANAGER ---
+# --- UTILS & HISTORY ---
 def get_past_questions():
     if os.path.exists(HISTORY_FILENAME):
         try:
@@ -60,245 +62,144 @@ def save_current_question(question_text):
     with open(HISTORY_FILENAME, "w", encoding="utf-8") as f:
         json.dump(history, f, indent=4)
 
-# --- YOUTUBE UPLOADER ---
-def upload_to_youtube(video_path, metadata_path):
-    print("🚀 Starting YouTube Upload...")
-    
-    if not all([YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN]):
-        print("❌ Upload Skipped: Missing YouTube Secrets.")
-        return
-
-    with open(metadata_path, "r", encoding="utf-8") as f:
-        meta = json.load(f)
-
-    creds = Credentials(None, refresh_token=YT_REFRESH_TOKEN, 
-                        token_uri="https://oauth2.googleapis.com/token", 
-                        client_id=YT_CLIENT_ID, client_secret=YT_CLIENT_SECRET)
-    youtube = build("youtube", "v3", credentials=creds)
-
-    body = {
-        "snippet": {
-            "title": meta["title"],
-            "description": meta["description"],
-            "tags": meta["tags"].split(","),
-            "categoryId": "27" 
-        },
-        "status": {
-            "privacyStatus": "private", 
-            "selfDeclaredMadeForKids": False
-        }
-    }
-
-    media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
-    request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
-
-    response = None
-    print("   Uploading...")
-    while response is None:
-        status, response = request.next_chunk()
-        if status: print(f"   Progress: {int(status.progress() * 100)}%")
-
-    print("✅ Upload Complete!")
-
-# --- GEMINI CONTENT ---
-def get_gemini_content():
-    print("🧠 Asking Gemini Flash for content...")
-    genai.configure(api_key=GEMINI_API_KEY)
-    
-    history_context = ", ".join(get_past_questions())
-    try:
-        model = genai.GenerativeModel('gemini-2.5-flash')
-    except:
-        model = genai.GenerativeModel('gemini-pro')
-
-    prompt = f"""
-    Generate 1 unique, engaging General Knowledge/Trivia question for Indian students.
-    Topics: Science, coding, computers, electronics, AI, or Tech.
-    Question length: Small (max 8 words).
-    
-    EXCLUDE these previous questions: [{history_context}]
-    
-    ALSO generate YouTube Metadata.
-    Output STRICT JSON. No Markdown.
-    Structure:
-    {{
-      "id": 1,
-      "question": "Question text?",
-      "options": ["A", "B", "C", "D"],
-      "correct_index": 0, 
-      "image_prompt": "9:16 background description, no text.",
-      "youtube_title": "Viral 5-8 word title #Shorts",
-      "youtube_description": "2-sentence description with hashtags.",
-      "youtube_tags": "tag1, tag2, tag3"
-    }}
-    """
-    
-    try:
-        response = model.generate_content(prompt)
-        text = response.text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(text)
-        print(f"✅ Gemini Generated: {data['question']}")
-        
-        save_current_question(data['question'])
-        
-        with open(METADATA_FILENAME, "w", encoding="utf-8") as f:
-            json.dump({
-                "title": data['youtube_title'],
-                "description": data['youtube_description'],
-                "tags": data['youtube_tags']
-            }, f, indent=4)
-        
-        return data
-    except Exception as e:
-        print(f"❌ Gemini Error: {e}")
-        return None
-
-# --- ASSETS & VIDEO ---
-async def generate_segment_tts(text, filename, voice, rate="+20%"):
-    try:
-        communicate = edge_tts.Communicate(text, voice, rate=rate)
-        await communicate.save(filename)
-    except Exception as e:
-        print(f"⚠️ TTS Error for {filename}: {e}")
-
-
-
+# --- IMAGE GENERATION (POLLINATIONS) ---
 def get_pollinations_image(prompt, filename):
-    print(f"🎨 Requesting Image...")
-    clean_prompt = urllib.parse.quote(prompt.replace("\n", " "))
-    url = f"https://gen.pollinations.ai/prompt/{clean_prompt}?model=flux&width=1080&height=1920&nologo=true"
+    print(f"🎨 Generating AI Image for prompt: {prompt}")
     
-    # Setup Retry Strategy
+    # URL Encode the prompt
+    encoded_prompt = urllib.parse.quote(prompt)
+    url = f"https://gen.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&model=flux"
+    
+    # Robust request with Retries
     session = requests.Session()
     retries = Retry(total=3, backoff_factor=2, status_forcelist=[500, 502, 503, 504])
     session.mount('https://', HTTPAdapter(max_retries=retries))
 
     try:
-        # Increase timeout to 60s for flux model generation
+        # Increased timeout to 60s for high-quality generation
         response = session.get(url, timeout=60)
-        
-        if response.status_code == 200 and len(response.content) > 5000: # Valid images are usually > 5KB
+        if response.status_code == 200 and len(response.content) > 10000:
             with open(filename, 'wb') as f:
                 f.write(response.content)
-            print("✅ Image saved.")
+            print("✅ Image generated successfully.")
             return True
         else:
-            print(f"⚠️ Image Download Failed (Status: {response.status_code})")
-    except Exception as e: 
-        print(f"⚠️ Image Connection Error: {e}")
+            print(f"⚠️ Pollinations failed. Status: {response.status_code}")
+    except Exception as e:
+        print(f"⚠️ Image Error: {e}")
     return False
 
-def create_quiz_video(data):
-    selected_voice = random.choice(INDIAN_MALE_VOICES)
-    print(f"🎙️ Using Voice: {selected_voice}")
+# --- GEMINI CONTENT ---
+def get_gemini_content():
+    print("🧠 Asking Gemini for a dark facts quiz...")
+    genai.configure(api_key=GEMINI_API_KEY)
+    history_context = ", ".join(get_past_questions())
+    
+    model = genai.GenerativeModel('gemini-1.5-flash') # Updated to latest stable flash
 
-    img_filename = "temp_bg.jpg"
-    image_downloaded = get_pollinations_image(data['image_prompt'], img_filename)
+    prompt = f"""
+    Generate 1 unique, engaging quiz question for a channel called 'Dark Intel'.
+    Topics: Dark History, Psychology, Space, or Tech Facts.
+    
+    EXCLUDE previous: [{history_context}]
+    
+    Output STRICT JSON only:
+    {{
+      "question": "Short question?",
+      "options": ["A", "B", "C", "D"],
+      "correct_index": 0,
+      "image_prompt": "Cinematic, dark aesthetic, 9:16 vertical, photorealistic, no text, related to [Topic]",
+      "yt_title": "Title #Shorts",
+      "yt_desc": "Description with #Shorts #Facts",
+      "yt_tags": "dark, facts, tech"
+    }}
+    """
+    
+    try:
+        response = model.generate_content(prompt)
+        data = json.loads(response.text.strip().replace("```json", "").replace("```", ""))
+        save_current_question(data['question'])
+        with open(METADATA_FILENAME, "w") as f:
+            json.dump(data, f)
+        return data
+    except Exception as e:
+        print(f"❌ Gemini Error: {e}")
+        return None
 
-    # --- CRITICAL FIX: SAFETY FALLBACK ---
-    # If image failed to download, use a dark grey color background instead of crashing
-    if image_downloaded and os.path.exists(img_filename):
-        # Ensure 'bg_clip' is initialized here
-        bg_clip_source = ImageClip(img_filename).resize(VIDEO_SIZE)
-    else:
-        print("⚠️ Using Fallback Color Background (Image failed)")
-        bg_clip_source = ColorClip(VIDEO_SIZE, color=(30, 30, 30))
+# --- TTS ---
+async def generate_tts(text, filename, voice):
+    communicate = edge_tts.Communicate(text, voice, rate="+15%")
+    await communicate.save(filename)
 
-    segments = {
-        "q":   {"text": data['question'], "file": "temp_q.mp3"},
-        "a":   {"text": f"Option A... {data['options'][0]}", "file": "temp_a.mp3"},
-        "b":   {"text": f"Option B... {data['options'][1]}", "file": "temp_b.mp3"},
-        "c":   {"text": f"Option C... {data['options'][2]}", "file": "temp_c.mp3"},
-        "d":   {"text": f"Option D... {data['options'][3]}", "file": "temp_d.mp3"},
-        "outro": {"text": "Wait for the correct answer or check the comments.", "file": "temp_outro.mp3"}
-    }
+# --- VIDEO CREATION ---
+def create_video(data):
+    voice = random.choice(INDIAN_MALE_VOICES)
+    img_file = "bg_gen.jpg"
+    
+    # Image Generation
+    has_image = get_pollinations_image(data['image_prompt'], img_file)
+    bg_clip = ImageClip(img_file).resize(VIDEO_SIZE) if has_image else ColorClip(VIDEO_SIZE, color=(20, 20, 20))
 
-    # Parallel TTS generation
-    async def run_all_tts():
-        tasks = [generate_segment_tts(val['text'], val['file'], selected_voice) for val in segments.values()]
+    # Audio Segments
+    segments = [
+        ("q", data['question']),
+        ("a", f"Option A: {data['options'][0]}"),
+        ("b", f"Option B: {data['options'][1]}"),
+        ("c", f"Option C: {data['options'][2]}"),
+        ("d", f"Option D: {data['options'][3]}"),
+        ("reveal", "The correct answer is coming in 5 seconds.")
+    ]
+    
+    async def run_tts():
+        tasks = [generate_tts(text, f"temp_{key}.mp3", voice) for key, text in segments]
         await asyncio.gather(*tasks)
-    asyncio.run(run_all_tts())
-
-    # Load Audio
-    try:
-        aud_q = AudioFileClip(segments["q"]["file"])
-        aud_a = AudioFileClip(segments["a"]["file"])
-        aud_b = AudioFileClip(segments["b"]["file"])
-        aud_c = AudioFileClip(segments["c"]["file"])
-        aud_d = AudioFileClip(segments["d"]["file"])
-        aud_outro = AudioFileClip(segments["outro"]["file"])
-        audio_clips = [aud_q, aud_a, aud_b, aud_c, aud_d, aud_outro]
-    except OSError:
-        print("❌ Critical TTS Failure. Exiting.")
-        return
-
-    # Timing
-    t_q = aud_q.duration
-    t_a = t_q + aud_a.duration
-    t_b = t_a + aud_b.duration
-    t_c = t_b + aud_c.duration
-    t_d = t_c + aud_d.duration
-    t_out = t_d + aud_outro.duration
-    t_reveal = t_out + THINKING_TIME
-    total_dur = t_reveal + 3
     
-    # Set background duration
-    bg_clip = bg_clip_source.set_duration(total_dur)
+    asyncio.run(run_tts())
+
+    # Audio Loading & Timing
+    audio_clips = [AudioFileClip(f"temp_{key}.mp3") for key, _ in segments]
+    durations = [c.duration for c in audio_clips]
     
-    # Text Clips
+    t_q = durations[0]
+    t_a = t_q + durations[1]
+    t_b = t_a + durations[2]
+    t_c = t_b + durations[3]
+    t_d = t_c + durations[4]
+    t_wait = t_d + durations[5]
+    t_reveal = t_wait + THINKING_TIME
+    total_dur = t_reveal + 2
+
+    # UI Composition
     txt_q = TextClip(data['question'], font=FONT, fontsize=FONT_SIZE_QUESTION, color=TEXT_COLOR, 
-                     stroke_color=STROKE_COLOR, stroke_width=STROKE_WIDTH, size=(950, None), 
-                     method='caption').set_position(('center', 250)).set_start(0).set_duration(total_dur)
+                     stroke_color=STROKE_COLOR, stroke_width=2, size=(900, None), method='caption').set_position(('center', 300)).set_duration(total_dur)
 
-    clips = [bg_clip, txt_q]
-    y_start, y_gap = 800, 180
-    
-    def make_opt(txt, t_start, correct, y):
-        n = TextClip(txt, font=FONT, fontsize=FONT_SIZE_OPTION, color=TEXT_COLOR, 
-                     stroke_color=STROKE_COLOR, stroke_width=STROKE_WIDTH, size=(900,None), 
-                     method='caption', align='West').set_position(('center', y)).set_start(t_start).set_end(t_reveal)
+    all_clips = [bg_clip.set_duration(total_dur), txt_q]
+    y_pos = 850
+
+    for i, opt in enumerate(data['options']):
+        start_t = [t_q, t_a, t_b, t_c][i]
+        is_correct = (i == data['correct_index'])
         
-        r = TextClip(txt, font=FONT, fontsize=FONT_SIZE_OPTION, color=HIGHLIGHT_COLOR if correct else TEXT_COLOR, 
-                     stroke_color=STROKE_COLOR, stroke_width=STROKE_WIDTH, size=(900,None), 
-                     method='caption', align='West').set_position(('center', y)).set_start(t_reveal).set_duration(total_dur - t_reveal)
-        return [n, r]
+        # Normal State
+        all_clips.append(TextClip(f"{chr(65+i)}: {opt}", font=FONT, fontsize=FONT_SIZE_OPTION, color=TEXT_COLOR, 
+                                  size=(850, None), method='caption', align='West').set_position((110, y_pos)).set_start(start_t).set_end(t_reveal))
+        # Reveal State (Highlighted)
+        all_clips.append(TextClip(f"{chr(65+i)}: {opt}", font=FONT, fontsize=FONT_SIZE_OPTION, color=HIGHLIGHT_COLOR if is_correct else TEXT_COLOR, 
+                                  size=(850, None), method='caption', align='West').set_position((110, y_pos)).set_start(t_reveal).set_duration(total_dur - t_reveal))
+        y_pos += 180
 
-    clips += make_opt(f"A: {data['options'][0]}", t_q, data['correct_index']==0, y_start)
-    clips += make_opt(f"B: {data['options'][1]}", t_a, data['correct_index']==1, y_start+y_gap)
-    clips += make_opt(f"C: {data['options'][2]}", t_b, data['correct_index']==2, y_start+y_gap*2)
-    clips += make_opt(f"D: {data['options'][3]}", t_c, data['correct_index']==3, y_start+y_gap*3)
+    # Finalize
+    final_audio = concatenate_audioclips(audio_clips + [AudioClip(lambda t: [0,0], duration=THINKING_TIME)])
+    final_video = CompositeVideoClip(all_clips, size=VIDEO_SIZE).set_audio(final_audio).set_duration(total_dur)
     
-    silence = AudioClip(lambda t: [0,0], duration=THINKING_TIME)
-    final_audio = concatenate_audioclips(audio_clips + [silence])
+    print("🎬 Rendering...")
+    final_video.write_videofile(OUTPUT_FILENAME, fps=24, codec="libx264", threads=4, logger=None)
     
-    final = CompositeVideoClip(clips, size=VIDEO_SIZE).set_audio(final_audio).set_duration(total_dur)
-    
-    print("🎬 Rendering Video...")
-    final.write_videofile(
-        OUTPUT_FILENAME, 
-        fps=24, 
-        codec="libx264", 
-        audio_codec="aac", 
-        logger=None, 
-        preset='ultrafast', 
-        threads=4
-    )
-    
-    # Cleanup
-    try:
-        final.close()
-        for c in audio_clips: c.close()
-        files_to_remove = [img_filename] + [s['file'] for s in segments.values()]
-        for f in files_to_remove:
-            if os.path.exists(f): os.remove(f)
-    except: pass
-    
-    print(f"✨ Video Generated: {OUTPUT_FILENAME}")
-    upload_to_youtube(OUTPUT_FILENAME, METADATA_FILENAME)
+    # Simple Cleanup
+    for key, _ in segments: os.remove(f"temp_{key}.mp3")
+    if os.path.exists(img_file): os.remove(img_file)
 
 if __name__ == "__main__":
-    if not GEMINI_API_KEY:
-        print("❌ Error: GEMINI_API_KEY is missing.")
-    else:
-        d = get_gemini_content()
-        if d: create_quiz_video(d)
+    content = get_gemini_content()
+    if content:
+        create_video(content)
