@@ -166,7 +166,7 @@ async def generate_segment_tts(text, filename, voice, rate="+20%"):
 def get_pollinations_image(prompt, filename):
     print(f"🎨 Requesting Image...")
     clean_prompt = urllib.parse.quote(prompt.replace("\n", " "))
-    url = f"https://gen.pollinations.ai/prompt/{clean_prompt}?model=flux&width=1080&height=1920&nologo=true"
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1080&nologo=true&model=flux&key=sk_ezYiRxPA927wb2dN8Gia94UBmfrxvNJX"
     
     # Setup Retry Strategy
     session = requests.Session()
