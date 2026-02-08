@@ -84,7 +84,7 @@ def upload_to_youtube(video_path, metadata_path):
             "categoryId": "27" 
         },
         "status": {
-            "privacyStatus": "public", 
+            "privacyStatus": "private", 
             "selfDeclaredMadeForKids": False
         }
     }
@@ -166,7 +166,7 @@ def get_pollinations_image(prompt, filename):
     clean_prompt = prompt.replace("\n", " ")
     encoded_prompt = urllib.parse.quote(clean_prompt)
     #url = f"https://gen.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&model=flux&key=sk_ezYiRxPA927wb2dN8Gia94UBmfrxvNJX"
-    url = f"https://gen.pollinations.ai/image/{encoded_prompt}?width=1080&height=1920&nologo=true&model=flux&key=sk_ezYiRxPA927wb2dN8Gia94UBmfrxvNJX"
+    url = f"https://gen.pollinations.ai/image/{encoded_prompt}?model=flux&key=sk_ezYiRxPA927wb2dN8Gia94UBmfrxvNJX"
     try:
         response = requests.get(url, timeout=20)
         # CRITICAL FIX: Check if we actually got data (not empty file)
