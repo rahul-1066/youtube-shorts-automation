@@ -126,7 +126,7 @@ def get_gemini_content():
       "question": "Question text?",
       "options": ["A", "B", "C", "D"],
       "correct_index": 0, 
-      "image_prompt": "Cinematic 9:16 background description, no text.",
+      "image_prompt": "9:16 background description, no text.",
       "youtube_title": "Viral 5-8 word title #Shorts",
       "youtube_description": "2-sentence description with hashtags.",
       "youtube_tags": "tag1, tag2, tag3"
@@ -166,7 +166,7 @@ def get_pollinations_image(prompt, filename):
     clean_prompt = prompt.replace("\n", " ")
     encoded_prompt = urllib.parse.quote(clean_prompt)
     #url = f"https://gen.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&model=flux&key=sk_ezYiRxPA927wb2dN8Gia94UBmfrxvNJX"
-    url = f"https://gen.pollinations.ai/image/{encoded_prompt}?model=flux&key=sk_ezYiRxPA927wb2dN8Gia94UBmfrxvNJX"
+    url = f"https://gen.pollinations.ai/image/{clean_prompt}?model=flux&key=sk_ezYiRxPA927wb2dN8Gia94UBmfrxvNJX"
     try:
         response = requests.get(url, timeout=20)
         # CRITICAL FIX: Check if we actually got data (not empty file)
